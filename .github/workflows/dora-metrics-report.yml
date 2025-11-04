@@ -27,14 +27,15 @@ jobs:
           echo "Calculating DORA metrics for the period 30 days ago to today."
           
           # Set the start date for our query (30 days ago)
-          START_DATE=$(date -v-30d +%Y-%m-%d)
+          # THIS IS THE CORRECTED LINE FOR LINUX
+          START_DATE=$(date -d "30 days ago" +%Y-%m-%d)
 
           #=================================================
           # 1. DEPLOYMENT FREQUENCY (DF)
           #=================================================
           # We count the number of merge commits to 'main'
           echo "--- 1. Deployment Frequency ---"
-          DEPLOYMENT_COUNT=$(gh search commits --query "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" --json mergedAt | jq 'length')
+          DEPLOYMENT_COUNT=$(gh search commits "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" --json mergedAt | jq 'length')
           echo "Total deployments in the last 30 days: $DEPLOYMENT_COUNT"
 
 
@@ -42,15 +43,17 @@ jobs:
           # 2. LEAD TIME FOR CHANGES (LTFC)
           #=================================================
           # We measure the average time from PR creation to PR merge.
-          # This is a strong, simple proxy for Lead Time.
           echo "--- 2. Lead Time for Changes (LTFC) ---"
-          AVG_LEAD_TIME_HOURS=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json createdAt,mergedAt | \
-                                jq '[.[] | ( ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600 )] | add / length | .')
-          
-          if [ -z "$AVG_LEAD_TIME_HOURS" ] || [ "$AVG_LEAD_TIME_HOURS" = "null" ]; then
-            echo "No PRs merged in this period."
+          # Get total seconds for all PRs and divide by count for a precise average
+          TOTAL_LEAD_TIME_SECONDS=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json createdAt,mergedAt | \
+                                      jq '[.[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601))] | add')
+          PR_COUNT=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json number | jq 'length')
+
+          if [ "$PR_COUNT" -gt 0 ]; then
+            AVG_LEAD_TIME_HOURS=$(echo "scale=2; $TOTAL_LEAD_TIME_SECONDS / $PR_COUNT / 3600" | bc)
+            echo "Average Lead Time for Changes: $AVG_LEAD_TIME_HOURS hours (from $PR_COUNT merged PRs)"
           else
-            echo "Average Lead Time for Changes: $AVG_LEAD_TIME_HOURS hours"
+            echo "No PRs merged in this period."
           fi
 
 
@@ -78,11 +81,13 @@ jobs:
           # This also requires the "incident" issue process.
           # It measures the time from issue creation to issue close.
           echo "--- 4. Mean Time to Restore (MTTR) ---"
-          AVG_MTTR_HOURS=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json createdAt,closedAt | \
-                             jq '[.[] | ( ((.closedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600 )] | add / length | .')
+          TOTAL_MTTR_SECONDS=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json createdAt,closedAt | \
+                                 jq '[.[] | ((.closedAt | fromdateiso8601) - (.createdAt | fromdateiso8601))] | add')
+          INCIDENT_COUNT=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json number | jq 'length')
 
-          if [ -z "$AVG_MTTR_HOURS" ] || [ "$AVG_MTTR_HOURS" = "null" ]; then
-            echo "No incidents were resolved in this period."
+          if [ "$INCIDENT_COUNT" -gt 0 ]; then
+            AVG_MTTR_HOURS=$(echo "scale=2; $TOTAL_MTTR_SECONDS / $INCIDENT_COUNT / 3600" | bc)
+            echo "Average Mean Time to Restore: $AVG_MTTR_HOURS hours (from $INCIDENT_COUNT resolved incidents)"
           else
-            echo "Average Mean Time to Restore: $AVG_MTTR_HOURS hours"
+            echo "No incidents were resolved in this period."
           fi

@@ -1,0 +1,50 @@
+# This is the name of your workflow
+name: Weekly Commit Report
+
+# This controls WHEN the workflow runs
+on:
+  # This makes it run on a schedule
+  schedule:
+    # This is a 'cron' string. This one means "At 08:00 on Monday."
+    - cron: '0 8 * * 1'
+  
+  # This line lets you run it manually from the "Actions" tab
+  workflow_dispatch:
+
+# This section defines the actual JOB to be done
+jobs:
+  build-report:
+    # This is the virtual machine it will run on
+    runs-on: ubuntu-latest
+
+    # These are the steps it will take
+    steps:
+      # 1. Install the tools we need
+      - name: Install curl and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+      
+      # 2. Run our command to get the data and save it to a file
+      - name: Fetch commit dates
+        run: |
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+               -H "Accept: application/vnd.github.v3+json" \
+               "https://api.github.com/repos/${{ github.repository }}/commits?per_page=30" \
+               | jq ".[] | .commit.author.date" > commit-dates.txt
+        #
+        # --- KEY DIFFERENCES ---
+        # A) We use ${{ secrets.GITHUB_TOKEN }} instead of your PAT.
+        #    This is a secure, automatic token GitHub provides.
+        # B) We use ${{ github.repository }} which automatically fills in
+        #    "YOUR_USERNAME/YOUR_REPO" for you.
+        # C) We use > commit-dates.txt to save the output to a file.
+
+      # 3. This is the "reporting" step.
+      - name: Upload commit report as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # This is the name of the downloadable file you'll see
+          name: weekly-commit-report
+          # This is the file it will upload
+          path: commit-dates.txt

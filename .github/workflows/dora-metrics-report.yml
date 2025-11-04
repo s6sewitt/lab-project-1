@@ -24,6 +24,8 @@ jobs:
 
       - name: Calculate DORA Metrics for the Last 30 Days
         env:
+          # Use the built-in token.
+          # The GH_TOKEN is automatically read by gh.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Calculating DORA metrics for the period 30 days ago to today."
@@ -33,8 +35,9 @@ jobs:
           # 1. DEPLOYMENT FREQUENCY (DF)
           #=================================================
           echo "--- 1. Deployment Frequency ---"
-          # This query is now correctly formatted as a single, quoted string.
-          DF_JSON=$(gh search commits "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" --json sha)
+          # CORRECTED: Removed the 'repo:' part.
+          # The gh command knows the repo from the checkout step.
+          DF_JSON=$(gh search commits "is:merge merge_date:>$START_DATE base:main" --json sha)
           DEPLOYMENT_COUNT=$(echo "$DF_JSON" | jq 'length')
           echo "Total deployments in the last 30 days: $DEPLOYMENT_COUNT"
 
@@ -42,6 +45,7 @@ jobs:
           # 2. LEAD TIME FOR CHANGES (LTFC)
           #=================================================
           echo "--- 2. Lead Time for Changes (LTFC) ---"
+          # This command was already correct as it didn't use 'repo:'
           PR_JSON=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json createdAt,mergedAt)
           PR_COUNT=$(echo "$PR_JSON" | jq 'length')
           
@@ -57,7 +61,7 @@ jobs:
           # 3. CHANGE FAILURE RATE (CFR)
           #=================================================
           echo "--- 3. Change Failure Rate (CFR) ---"
-          # This block now gracefully handles if 'gh issue list' fails
+          # Gracefully handle if 'gh issue list' fails (e.g., Issues disabled)
           FAILURE_JSON=$(gh issue list --label "incident" --search "created:>$START_DATE" --json number 2>/dev/null)
           
           if [ -z "$FAILURE_JSON" ]; then
@@ -79,7 +83,7 @@ jobs:
           # 4. MEAN TIME TO RESTORE (MTTR)
           #=================================================
           echo "--- 4. Mean Time to Restore (MTTR) ---"
-          # This block also gracefully handles if 'gh issue list' fails
+          # Gracefully handle if 'gh issue list' fails
           INCIDENT_JSON=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json createdAt,closedAt 2>/dev/null)
           
           if [ -z "$INCIDENT_JSON" ]; then

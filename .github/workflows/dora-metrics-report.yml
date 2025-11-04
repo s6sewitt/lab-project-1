@@ -41,7 +41,7 @@ jobs:
       # This is the file the tool needs to know *which* repo to scan
       - name: Create team config file
         run: |
-          echo '["${{ github.repository }}"]' > my-team.json
+          echo '{"repos": ["${{ github.repository }}"]}' > my-team.json
         # ${{ github.repository }} automatically inserts your "username/repo"
 
       # Step 5: Run the DORA scripts

@@ -1,4 +1,4 @@
-name: DORA Metrics Weekly Report
+name: DORA Metrics Report
 
 on:
   schedule:
@@ -9,77 +9,80 @@ on:
   workflow_dispatch:
 
 jobs:
-  calculate-dora-metrics:
+  calculate-metrics:
     runs-on: ubuntu-latest
-    
-    # These are permissions the job needs
+
+    # Grant permissions for the GitHub CLI to read your repo data
     permissions:
-      contents: read     # To read your repo
-      pull-requests: read # To read pull request data
-      issues: read       # To read issue data for incidents
-      actions: read      # To read workflow run data for deployments
+      contents: read
+      pull-requests: read
+      issues: read
 
     steps:
-      # Step 1: Checkout the dora-the-explora tool
-      - name: Checkout dora-the-explora tool
-        uses: actions/checkout@v4
-        with:
-          repository: ministryofjustice/dora-the-explora
-          path: dora-tool # Clone it into a folder named 'dora-tool'
-
-      # Step 2: Set up Python
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      # Step 3: Install the tool's dependencies
-      - name: Install dependencies
-        run: pip install -r dora-tool/requirements.txt
-
-      # Step 4: Create the JSON config file on-the-fly
-      # This is the file the tool needs to know *which* repo to scan
-      # Step 4: Create the JSON config file on-the-fly
-      - name: Create team config file
-        run: |
-          echo '{
-            "repos": ["${{ github.repository }}"],
-            "excluded_workflows": []
-          }' > my-team.json
-        # ${{ github.repository }} automatically inserts your "username/repo"
-
-      # Step 5: Run the DORA scripts
-      - name: Run DORA scripts
+      - name: Calculate DORA Metrics for the Last 30 Days
         env:
-          # This is the secret token. It's more secure than a PAT.
-          ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This is the secure, built-in token. No PAT needed.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Set the start and end dates (e.g., last 30 days)
-          START_DATE=$(date -d "30 days ago" +%Y-%m-%d)
-          END_DATE=$(date +%Y-%m-%d)
-          DATE_RANGE="$START_DATE..$END_DATE"
+          echo "Calculating DORA metrics for the period 30 days ago to today."
           
-          echo "Calculating DORA metrics for $DATE_RANGE"
-          
-          # Run the scripts and save all output to 'dora_report.txt'
-          # We run them from inside the 'dora-tool' folder
-          cd dora-tool
-          
-          echo "--- Deployment Frequency (DF) ---" >> ../dora_report.txt
-          python3 df.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
-          
-          echo "--- Lead Time for Changes (LTFC) ---" >> ../dora_report.txt
-          python3 ltfc.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
-          
-          echo "--- Change Failure Rate (CFR) ---" >> ../dora_report.txt
-          python3 cfr.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
-          
-          echo "--- Mean Time to Restore (MTTR) ---" >> ../dora_report.txt
-          python3 mttr.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
+          # Set the start date for our query (30 days ago)
+          START_DATE=$(date -v-30d +%Y-%m-%d)
 
-      # Step 6: Upload the final report
-      - name: Upload DORA report
-        uses: actions/upload-artifact@v4
-        with:
-          name: dora-metrics-report
-          path: dora_report.txt
+          #=================================================
+          # 1. DEPLOYMENT FREQUENCY (DF)
+          #=================================================
+          # We count the number of merge commits to 'main'
+          echo "--- 1. Deployment Frequency ---"
+          DEPLOYMENT_COUNT=$(gh search commits --query "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" --json mergedAt | jq 'length')
+          echo "Total deployments in the last 30 days: $DEPLOYMENT_COUNT"
+
+
+          #=================================================
+          # 2. LEAD TIME FOR CHANGES (LTFC)
+          #=================================================
+          # We measure the average time from PR creation to PR merge.
+          # This is a strong, simple proxy for Lead Time.
+          echo "--- 2. Lead Time for Changes (LTFC) ---"
+          AVG_LEAD_TIME_HOURS=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json createdAt,mergedAt | \
+                                jq '[.[] | ( ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600 )] | add / length | .')
+          
+          if [ -z "$AVG_LEAD_TIME_HOURS" ] || [ "$AVG_LEAD_TIME_HOURS" = "null" ]; then
+            echo "No PRs merged in this period."
+          else
+            echo "Average Lead Time for Changes: $AVG_LEAD_TIME_HOURS hours"
+          fi
+
+
+          #=================================================
+          # 3. CHANGE FAILURE RATE (CFR)
+          #=================================================
+          # This requires a process change: You must start creating a
+          # GitHub Issue with the label "incident" or "bug" for each failure.
+          echo "--- 3. Change Failure Rate (CFR) ---"
+          # We will look for issues labeled "incident"
+          FAILURE_COUNT=$(gh issue list --label "incident" --search "created:>$START_DATE" --json number | jq 'length')
+          echo "Failures (issues labeled 'incident') in last 30 days: $FAILURE_COUNT"
+
+          if [ "$DEPLOYMENT_COUNT" -gt 0 ]; then
+            CFR=$(echo "scale=2; ($FAILURE_COUNT / $DEPLOYMENT_COUNT) * 100" | bc)
+            echo "Change Failure Rate: $CFR%"
+          else
+            echo "Change Failure Rate: 0% (No deployments)"
+          fi
+
+
+          #=================================================
+          # 4. MEAN TIME TO RESTORE (MTTR)
+          #=================================================
+          # This also requires the "incident" issue process.
+          # It measures the time from issue creation to issue close.
+          echo "--- 4. Mean Time to Restore (MTTR) ---"
+          AVG_MTTR_HOURS=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json createdAt,closedAt | \
+                             jq '[.[] | ( ((.closedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600 )] | add / length | .')
+
+          if [ -z "$AVG_MTTR_HOURS" ] || [ "$AVG_MTTR_HOURS" = "null" ]; then
+            echo "No incidents were resolved in this period."
+          else
+            echo "Average Mean Time to Restore: $AVG_MTTR_HOURS hours"
+          fi

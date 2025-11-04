@@ -39,9 +39,13 @@ jobs:
 
       # Step 4: Create the JSON config file on-the-fly
       # This is the file the tool needs to know *which* repo to scan
+      # Step 4: Create the JSON config file on-the-fly
       - name: Create team config file
         run: |
-          echo '{"repos": ["${{ github.repository }}"]}' > my-team.json
+          echo '{
+            "repos": ["${{ github.repository }}"],
+            "excluded_workflows": []
+          }' > my-team.json
         # ${{ github.repository }} automatically inserts your "username/repo"
 
       # Step 5: Run the DORA scripts

@@ -19,62 +19,53 @@ jobs:
       issues: read
 
     steps:
-      #=================================================
-      # STEP 1: CHECKOUT THE REPOSITORY
-      #=================================================
-      # THIS WAS THE MISSING STEP. It downloads your code
-      # so the 'gh' commands know which repo to run against.
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      #=================================================
-      # STEP 2: CALCULATE METRICS
-      #=================================================
       - name: Calculate DORA Metrics for the Last 30 Days
         env:
-          # This is the secure, built-in token. No PAT needed.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Calculating DORA metrics for the period 30 days ago to today."
-          
-          # Set the start date for our query (30 days ago)
           START_DATE=$(date -d "30 days ago" +%Y-%m-%d)
 
           #=================================================
           # 1. DEPLOYMENT FREQUENCY (DF)
           #=================================================
           echo "--- 1. Deployment Frequency ---"
-          # THIS COMMAND IS NOW CORRECTED (removed the invalid --json flag)
-          DEPLOYMENT_COUNT=$(gh search commits "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" | jq 'length')
+          # This query is now correctly formatted as a single, quoted string.
+          DF_JSON=$(gh search commits "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" --json sha)
+          DEPLOYMENT_COUNT=$(echo "$DF_JSON" | jq 'length')
           echo "Total deployments in the last 30 days: $DEPLOYMENT_COUNT"
-
 
           #=================================================
           # 2. LEAD TIME FOR CHANGES (LTFC)
           #=================================================
-          # We measure the average time from PR creation to PR merge.
           echo "--- 2. Lead Time for Changes (LTFC) ---"
-          # Get total seconds for all PRs and divide by count for a precise average
-          TOTAL_LEAD_TIME_SECONDS=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json createdAt,mergedAt | \
-                                      jq '[.[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601))] | add')
-          PR_COUNT=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json number | jq 'length')
-
+          PR_JSON=$(gh pr list --state merged --base main --search "merged:>$START_DATE" --json createdAt,mergedAt)
+          PR_COUNT=$(echo "$PR_JSON" | jq 'length')
+          
           if [ "$PR_COUNT" -gt 0 ]; then
+            TOTAL_LEAD_TIME_SECONDS=$(echo "$PR_JSON" | jq '[.[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601))] | add')
             AVG_LEAD_TIME_HOURS=$(echo "scale=2; $TOTAL_LEAD_TIME_SECONDS / $PR_COUNT / 3600" | bc)
             echo "Average Lead Time for Changes: $AVG_LEAD_TIME_HOURS hours (from $PR_COUNT merged PRs)"
           else
             echo "No PRs merged in this period."
           fi
 
-
           #=================================================
           # 3. CHANGE FAILURE RATE (CFR)
           #=================================================
-          # This requires a process change: You must start creating a
-          # GitHub Issue with the label "incident" or "bug" for each failure.
           echo "--- 3. Change Failure Rate (CFR) ---"
-          # We will look for issues labeled "incident"
-          FAILURE_COUNT=$(gh issue list --label "incident" --search "created:>$START_DATE" --json number | jq 'length')
+          # This block now gracefully handles if 'gh issue list' fails
+          FAILURE_JSON=$(gh issue list --label "incident" --search "created:>$START_DATE" --json number 2>/dev/null)
+          
+          if [ -z "$FAILURE_JSON" ]; then
+            echo "Could not query issues (Issues may be disabled). Defaulting to 0 failures."
+            FAILURE_COUNT=0
+          else
+            FAILURE_COUNT=$(echo "$FAILURE_JSON" | jq 'length')
+          fi
           echo "Failures (issues labeled 'incident') in last 30 days: $FAILURE_COUNT"
 
           if [ "$DEPLOYMENT_COUNT" -gt 0 ]; then
@@ -84,18 +75,22 @@ jobs:
             echo "Change Failure Rate: 0% (No deployments)"
           fi
 
-
           #=================================================
           # 4. MEAN TIME TO RESTORE (MTTR)
-          #================================_
-          # This also requires the "incident" issue process.
-          # It measures the time from issue creation to issue close.
+          #=================================================
           echo "--- 4. Mean Time to Restore (MTTR) ---"
-          TOTAL_MTTR_SECONDS=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json createdAt,closedAt | \
-                                 jq '[.[] | ((.closedAt | fromdateiso8601) - (.createdAt | fromdateiso8601))] | add')
-          INCIDENT_COUNT=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json number | jq 'length')
+          # This block also gracefully handles if 'gh issue list' fails
+          INCIDENT_JSON=$(gh issue list --state closed --label "incident" --search "closed:>$START_DATE" --json createdAt,closedAt 2>/dev/null)
+          
+          if [ -z "$INCIDENT_JSON" ]; then
+            echo "Could not query issues (Issues may be disabled). Defaulting to 0 incidents."
+            INCIDENT_COUNT=0
+          else
+            INCIDENT_COUNT=$(echo "$INCIDENT_JSON" | jq 'length')
+          fi
 
           if [ "$INCIDENT_COUNT" -gt 0 ]; then
+            TOTAL_MTTR_SECONDS=$(echo "$INCIDENT_JSON" | jq '[.[] | ((.closedAt | fromdateiso8601) - (.createdAt | fromdateiso8601))] | add')
             AVG_MTTR_HOURS=$(echo "scale=2; $TOTAL_MTTR_SECONDS / $INCIDENT_COUNT / 3600" | bc)
             echo "Average Mean Time to Restore: $AVG_MTTR_HOURS hours (from $INCIDENT_COUNT resolved incidents)"
           else

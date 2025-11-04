@@ -1,0 +1,81 @@
+name: DORA Metrics Weekly Report
+
+on:
+  schedule:
+    # Runs at 7:00 AM UTC every Monday
+    - cron: '0 7 * * 1'
+  
+  # This allows you to run it manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  calculate-dora-metrics:
+    runs-on: ubuntu-latest
+    
+    # These are permissions the job needs
+    permissions:
+      contents: read     # To read your repo
+      pull-requests: read # To read pull request data
+      issues: read       # To read issue data for incidents
+      actions: read      # To read workflow run data for deployments
+
+    steps:
+      # Step 1: Checkout the dora-the-explora tool
+      - name: Checkout dora-the-explora tool
+        uses: actions/checkout@v4
+        with:
+          repository: ministryofjustice/dora-the-explora
+          path: dora-tool # Clone it into a folder named 'dora-tool'
+
+      # Step 2: Set up Python
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3: Install the tool's dependencies
+      - name: Install dependencies
+        run: pip install -r dora-tool/requirements.txt
+
+      # Step 4: Create the JSON config file on-the-fly
+      # This is the file the tool needs to know *which* repo to scan
+      - name: Create team config file
+        run: |
+          echo '["${{ github.repository }}"]' > my-team.json
+        # ${{ github.repository }} automatically inserts your "username/repo"
+
+      # Step 5: Run the DORA scripts
+      - name: Run DORA scripts
+        env:
+          # This is the secret token. It's more secure than a PAT.
+          ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Set the start and end dates (e.g., last 30 days)
+          START_DATE=$(date -d "30 days ago" +%Y-%m-%d)
+          END_DATE=$(date +%Y-%m-%d)
+          DATE_RANGE="$START_DATE..$END_DATE"
+          
+          echo "Calculating DORA metrics for $DATE_RANGE"
+          
+          # Run the scripts and save all output to 'dora_report.txt'
+          # We run them from inside the 'dora-tool' folder
+          cd dora-tool
+          
+          echo "--- Deployment Frequency (DF) ---" >> ../dora_report.txt
+          python3 df.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
+          
+          echo "--- Lead Time for Changes (LTFC) ---" >> ../dora_report.txt
+          python3 ltfc.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
+          
+          echo "--- Change Failure Rate (CFR) ---" >> ../dora_report.txt
+          python3 cfr.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
+          
+          echo "--- Mean Time to Restore (MTTR) ---" >> ../dora_report.txt
+          python3 mttr.py ../my-team.json $DATE_RANGE >> ../dora_report.txt
+
+      # Step 6: Upload the final report
+      - name: Upload DORA report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dora-metrics-report
+          path: dora_report.txt

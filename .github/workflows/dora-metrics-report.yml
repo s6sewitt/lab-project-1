@@ -19,6 +19,17 @@ jobs:
       issues: read
 
     steps:
+      #=================================================
+      # STEP 1: CHECKOUT THE REPOSITORY
+      #=================================================
+      # THIS WAS THE MISSING STEP. It downloads your code
+      # so the 'gh' commands know which repo to run against.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      #=================================================
+      # STEP 2: CALCULATE METRICS
+      #=================================================
       - name: Calculate DORA Metrics for the Last 30 Days
         env:
           # This is the secure, built-in token. No PAT needed.
@@ -27,15 +38,14 @@ jobs:
           echo "Calculating DORA metrics for the period 30 days ago to today."
           
           # Set the start date for our query (30 days ago)
-          # THIS IS THE CORRECTED LINE FOR LINUX
           START_DATE=$(date -d "30 days ago" +%Y-%m-%d)
 
           #=================================================
           # 1. DEPLOYMENT FREQUENCY (DF)
           #=================================================
-          # We count the number of merge commits to 'main'
           echo "--- 1. Deployment Frequency ---"
-          DEPLOYMENT_COUNT=$(gh search commits "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" --json mergedAt | jq 'length')
+          # THIS COMMAND IS NOW CORRECTED (removed the invalid --json flag)
+          DEPLOYMENT_COUNT=$(gh search commits "repo:${{ github.repository }} is:merge merge_date:>$START_DATE base:main" | jq 'length')
           echo "Total deployments in the last 30 days: $DEPLOYMENT_COUNT"
 
 
@@ -77,7 +87,7 @@ jobs:
 
           #=================================================
           # 4. MEAN TIME TO RESTORE (MTTR)
-          #=================================================
+          #================================_
           # This also requires the "incident" issue process.
           # It measures the time from issue creation to issue close.
           echo "--- 4. Mean Time to Restore (MTTR) ---"
